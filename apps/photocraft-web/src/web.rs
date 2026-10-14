@@ -54,6 +54,8 @@ pub fn start() {
         };
         let q = query();
         let force_cpu = q.contains("cpu");
+        // Inside lcdcLive's iframe, file open/save go over postMessage (see `embed`).
+        let embed = crate::embed::embed_active(&q);
         let mut options = eframe::WebOptions::default();
         photocraft_ui_egui::gpu_canvas::use_adapter_limits(&mut options.wgpu_options.wgpu_setup);
         if q.contains("webgl")
@@ -79,11 +81,14 @@ pub fn start() {
                 Box::new(move |cc| {
                     PhotocraftApp::setup_context(&cc.egui_ctx, ThemeKind::Pro);
                     let inbox: Inbox = Arc::default();
+                    if embed {
+                        crate::embed::install(inbox.clone(), cc.egui_ctx.clone());
+                    }
                     let served: Served = Arc::default();
                     load_font_manifest(served.clone(), cc.egui_ctx.clone());
                     let (session, warnings) = crate::preset_bridge::session(presets.clone());
                     preset_warnings.extend(warnings);
-                    let mut app = PhotocraftApp::new(session, services(inbox.clone()));
+                    let mut app = PhotocraftApp::new(session, services(inbox.clone(), embed));
                     if !preset_warnings.is_empty() {
                         photocraft_ui_egui::notices::post(&mut app, i18n::t("Some brush presets could not be loaded"), preset_warnings, true, None);
                     }
@@ -97,10 +102,13 @@ pub fn start() {
                     }
                     let unsaved = Arc::new(AtomicBool::new(false));
                     guard_unload(unsaved.clone());
-                    Ok(Box::new(WebShell { app, inbox, unsaved, served, database, presets }))
+                    Ok(Box::new(WebShell { app, inbox, unsaved, served, database, presets, embed, embed_dirty: None }))
                 }),
             )
             .await;
+        if embed && result.is_ok() {
+            crate::embed::post_ready();
+        }
         if let Some(el) = document.get_element_by_id("photocraft_loading") {
             match result {
                 Ok(()) => el.remove(),
@@ -228,6 +236,12 @@ struct WebShell {
     served: Served,
     database: Option<web_sys::IdbDatabase>,
     presets: crate::preset_bridge::Bridge,
+    /// Loaded with `?embed=lcdclive`: the lcdcLive parent page gets state messages.
+    embed: bool,
+    /// The last documents-dirty value posted to the parent, so [`embed::post_dirty`]
+    /// fires on change only. Presets are deliberately not counted: the parent's
+    /// unsaved guard is about the user's document, not a dirty brush preset.
+    embed_dirty: Option<bool>,
 }
 
 impl WebShell {
@@ -247,6 +261,13 @@ impl WebShell {
             });
         }
         self.unsaved.store(self.app.has_unsaved_work() || self.presets.unsaved(), Ordering::Relaxed);
+        if self.embed {
+            let dirty = self.app.has_unsaved_work();
+            if self.embed_dirty != Some(dirty) {
+                self.embed_dirty = Some(dirty);
+                crate::embed::post_dirty(dirty);
+            }
+        }
     }
 
     /// Fetches the served families asked for (picked in a font menu, or needed by a layout) and
@@ -333,7 +354,7 @@ impl eframe::App for WebShell {
     }
 }
 
-fn services(inbox: Inbox) -> Services {
+fn services(inbox: Inbox, embed: bool) -> Services {
     Services {
         screen_pick: screen_color_service(),
         import: Some(Box::new(|name: &str, bytes: &[u8], max_svg_group_depth: usize| {
@@ -391,7 +412,13 @@ fn services(inbox: Inbox) -> Services {
                 reply.send(Some(FileDialogAnswer::SaveTo(name)));
             }
         })),
-        write: Some(Box::new(|path: &str, bytes: &[u8]| download(path, bytes))),
+        // Embedded in lcdcLive, every save and export goes to the parent page, which
+        // puts it in the job's folder; otherwise the browser download, as upstream.
+        write: Some(if embed {
+            Box::new(|path: &str, bytes: &[u8]| crate::embed::post_save(path, bytes))
+        } else {
+            Box::new(|path: &str, bytes: &[u8]| download(path, bytes))
+        }),
         encode_png: Some(Box::new(|w, h, rgba| {
             let img = Image::from_u8(w, h, ChannelLayout::Rgba, rgba.to_vec()).map_err(|e| e.to_string())?;
             photocraft_codecs::encode(&img, photocraft_codecs::Format::Png, &EncodeOptions::default()).map_err(|e| e.to_string())
