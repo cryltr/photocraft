@@ -1,0 +1,74 @@
+# lcdc.co fork of storytold/photocraft: build and release the web editor.
+#
+# Lives in the FORK at .github/workflows/build-release.yml (this copy in
+# lcdcLive is the prepared kit; see README.md beside it). On an lcdc-v* tag
+# push, or run by hand, it builds the static web site the same way upstream's
+# release does (packaging/web/package.sh with the pinned Trunk), runs the web
+# app's tests, and publishes a GitHub release carrying the zip and its SHA-256.
+# lcdcLive pins that URL and checksum in lib/artcraft/versions.ts.
+#
+# Written against upstream v0.8.2. Validate with a real run in the fork, and
+# align the test step with upstream's ci.yml for photocraft-web at that time.
+
+name: Build and release photocraft-web
+
+on:
+  push:
+    tags:
+      - "lcdc-v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-web:
+    name: Build, test and release the web editor
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain (stable, wasm target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: lcdc-release-web
+
+      # The same pinned Trunk upstream's release uses (craft-common-actions
+      # release.yml, trunk-version default 0.21.14 at the time of writing).
+      - name: Install Trunk
+        uses: storytold/craft-common-actions/actions/install-trunk@main
+        with:
+          trunk-version: "0.21.14"
+
+      - name: Run photocraft-web tests
+        run: cargo test -p photocraft-web
+
+      - name: Build and zip (upstream's own packaging script)
+        run: packaging/web/package.sh
+
+      - name: Checksum
+        id: checksum
+        run: |
+          cd dist/release
+          ZIP=$(ls photocraft-web-*.zip)
+          sha256sum "$ZIP" > SHA256SUMS.txt
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          cat SHA256SUMS.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('lcdc-manual-{0}', github.run_number) }}
+          name: ${{ steps.checksum.outputs.zip }}
+          body: |
+            lcdc.co build of photocraft-web from this fork.
+            Pin the zip URL and the SHA-256 from SHA256SUMS.txt in lcdcLive's lib/artcraft/versions.ts.
+          files: |
+            dist/release/photocraft-web-*.zip
+            dist/release/SHA256SUMS.txt

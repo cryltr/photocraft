@@ -1,0 +1,85 @@
+# lcdc.co fork of storytold/photocraft: weekly upstream catch-up.
+#
+# Lives in the FORK at .github/workflows/merge-upstream.yml (this copy in
+# lcdcLive is the prepared kit; see README.md beside it). Once a week it
+# merges upstream main into a branch, rebuilds and tests the web editor, and
+# opens a pull request in the fork. Nothing reaches lcdcLive until Cory merges
+# that pull request, a release is tagged, and the pin in lcdcLive is bumped.
+#
+# A merge conflict (most likely in apps/photocraft-web/src, where our save
+# link lives) fails the merge step; the fix is a manual merge on the branch.
+
+name: Merge upstream weekly
+
+on:
+  schedule:
+    - cron: "0 19 * * 0" # Sundays 19:00 UTC, Monday morning in Australia
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge-upstream:
+    name: Merge upstream main, rebuild, test, open a pull request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream main into a branch
+        id: merge
+        run: |
+          git config user.name "lcdc.co fork bot"
+          git config user.email "noreply@lcdc.co"
+          git remote add upstream https://github.com/storytold/photocraft.git
+          git fetch upstream main --tags
+          BRANCH="upstream-merge-$(date -u +%Y%m%d)"
+          git checkout -b "$BRANCH"
+          git merge upstream/main --no-edit
+          if git diff --quiet origin/main HEAD; then
+            echo "nothing_new=true" >> "$GITHUB_OUTPUT"
+          else
+            git push origin "$BRANCH"
+            echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rust toolchain (stable, wasm target)
+        if: steps.merge.outputs.nothing_new != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust cache
+        if: steps.merge.outputs.nothing_new != 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: lcdc-release-web
+
+      - name: Install Trunk
+        if: steps.merge.outputs.nothing_new != 'true'
+        uses: storytold/craft-common-actions/actions/install-trunk@main
+        with:
+          trunk-version: "0.21.14"
+
+      - name: Run photocraft-web tests
+        if: steps.merge.outputs.nothing_new != 'true'
+        run: cargo test -p photocraft-web
+
+      - name: Build the web editor
+        if: steps.merge.outputs.nothing_new != 'true'
+        run: packaging/web/package.sh
+
+      - name: Open the pull request
+        if: steps.merge.outputs.nothing_new != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr create \
+            --base main \
+            --head "${{ steps.merge.outputs.branch }}" \
+            --title "Merge upstream main ($(date -u '+%d %b %Y'))" \
+            --body "Weekly upstream catch-up. Build and tests passed in CI. Merging this does not change lcdcLive until a release is tagged and the pin in lib/artcraft/versions.ts is bumped."
