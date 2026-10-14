@@ -97,10 +97,7 @@ mod bridge {
         pub fn save_fn(&self) -> Box<dyn FnMut(&str, &[u8]) -> Result<(), String>> {
             let bridge = self.clone();
             Box::new(move |path: &str, bytes: &[u8]| {
-                let name = std::path::Path::new(path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "photocraft".into());
+                let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "photocraft".into());
                 let array = js_sys::Uint8Array::from(bytes);
                 let buffer = array.buffer();
                 let msg = message("save");
@@ -147,10 +144,7 @@ mod bridge {
                 if kind.as_deref() != Some(message_type("open").as_str()) {
                     return;
                 }
-                let name = Reflect::get(&data, &JsValue::from_str("name"))
-                    .ok()
-                    .and_then(|v| v.as_string())
-                    .unwrap_or_else(|| "document".into());
+                let name = Reflect::get(&data, &JsValue::from_str("name")).ok().and_then(|v| v.as_string()).unwrap_or_else(|| "document".into());
                 let Ok(bytes) = Reflect::get(&data, &JsValue::from_str("bytes")) else { return };
                 // Accept an ArrayBuffer or a Uint8Array.
                 let array = if let Some(buffer) = bytes.dyn_ref::<js_sys::ArrayBuffer>() {
