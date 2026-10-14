@@ -12,13 +12,14 @@
 //! - dropped files are read asynchronously by `web::WebShell` and delivered through the inbox.
 //!
 //! URL query flags: `?cpu` forces the CPU canvas path (same as `PHOTOCRAFT_CPU_CANVAS=1`);
-//! `?webgl` forces the WebGL2 backend instead of WebGPU; `?embed=lcdclive` switches file
-//! open/save to `window.postMessage` with the embedding lcdcLive parent page (see `embed`).
+//! `?webgl` forces the WebGL2 backend instead of WebGPU; `?host=parent` (framed pages only)
+//! switches file open/save to `window.postMessage` with the host page, the PdfCraft bridge
+//! protocol with `photocraft:*` messages (see `host`).
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 #[cfg(any(target_arch = "wasm32", test))]
-mod embed;
+mod host;
 
 #[cfg(any(target_arch = "wasm32", test))]
 mod preset_bridge;
